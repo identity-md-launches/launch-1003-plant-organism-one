@@ -15,6 +15,7 @@ contract PlantStateMachineHandler is Test {
     address[3] public actors;
     uint32[3] public cells = [uint32(10223579), uint32(10354651), uint32(10420186)];
     uint256[3][3] public stake;
+    uint256[3] public stakeAtRequest;
     uint256 public donated;
     uint256 public advanced;
     uint256 public fees;
@@ -172,6 +173,10 @@ contract PlantStateMachineHandler is Test {
         uint256 beforeBalance = imd.balanceOf(who);
         vm.prank(who);
         organism.heartbeat();
+        // Snapshot the independent holder ledger, including cells not currently nominated.
+        for (uint256 c; c < 3; ++c) {
+            stakeAtRequest[c] = stake[c][0] + stake[c][1] + stake[c][2];
+        }
         advanced += beforeBalance - imd.balanceOf(who);
         fees += intake.price();
         ++requests;
@@ -213,10 +218,35 @@ contract PlantStateMachineHandler is Test {
         if (organism.location() != 0 && !_pending().received) return;
         uint256 beforeBalance = _paidToActors();
         uint256 beforeDay = organism.lastSettledDay();
+        uint32 beforeLocation = organism.location();
+        uint32 capturedCandidate = _pending().challenger;
+        uint32 liveCandidate = organism.challenger();
         organism.settle();
         paid += _paidToActors() - beforeBalance;
-        if (organism.lastSettledDay() > beforeDay) ++settlements;
+        if (organism.lastSettledDay() > beforeDay) {
+            ++settlements;
+            uint32 destination = organism.location();
+            if (beforeLocation != 0 && destination != beforeLocation) {
+                assertTrue(
+                    destination == capturedCandidate || destination == liveCandidate, "move used an unnominated cell"
+                );
+                assertGe(_committedStake(destination), 150 ether, "move used uncommitted quorum");
+                assertGt(
+                    _committedStake(destination), _committedStake(beforeLocation), "move used uncommitted majority"
+                );
+            }
+        }
         _observe();
+    }
+
+    function _committedStake(uint32 cell) private view returns (uint256) {
+        for (uint256 c; c < 3; ++c) {
+            if (cells[c] == cell) {
+                uint256 remaining = stake[c][0] + stake[c][1] + stake[c][2];
+                return remaining < stakeAtRequest[c] ? remaining : stakeAtRequest[c];
+            }
+        }
+        revert("untracked cell");
     }
 
     function clear() external {
@@ -241,6 +271,7 @@ contract PlantStateMachineHandler is Test {
 
     function assertLedger() public view {
         uint256 held = imd.balanceOf(address(organism));
+        assertEq(organism.voteRound(), requests, "vote round must advance exactly once per request");
         assertEq(held + fees + paid, donated + advanced, "IMD inflow/outflow ghost ledger");
         assertEq(imd.balanceOf(address(intake)), fees, "oracle fees paid exactly once");
         assertEq(_paidToActors() + advanced, 30000 ether + paid, "actor IMD ledger");
@@ -260,6 +291,13 @@ contract PlantStateMachineHandler is Test {
                 cellSum += stake[c][a];
             }
             assertEq(organism.parkedTotal(cells[c]), cellSum, "cell aggregation");
+            if (_pending().exists) {
+                assertEq(
+                    organism.votingStake(cells[c]),
+                    _committedStake(cells[c]),
+                    "pending vote differs from request-time stake capped by withdrawals"
+                );
+            }
             allParked += cellSum;
         }
         assertEq(organism.totalParked(), allParked);

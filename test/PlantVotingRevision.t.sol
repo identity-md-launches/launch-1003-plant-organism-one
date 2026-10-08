@@ -109,4 +109,54 @@ contract PlantVotingRevisionTest is PlantTestBase {
         assertEq(organism.water(), 50);
         assertEq(organism.incompletes(START + 2), 3);
     }
+
+    function test_currentCellWithdrawalBreaksTieForCommittedCandidate() public {
+        _birth();
+        _park(bob, OTHER, 100 ether);
+        _ask();
+        _deliver(0, 0, true);
+        _unpark(alice, LISBON, 1);
+        organism.settle();
+        assertEq(organism.location(), OTHER);
+        assertEq(organism.challenger(), 0);
+        _conservation();
+    }
+
+    function test_timeoutRetryRefreshesSnapshotIncludingCooldownDeposits() public {
+        _birth();
+        _park(bob, OTHER, 50 ether);
+        _ask();
+        uint256 oldRound = organism.voteRound();
+        _park(bob, OTHER, 150 ether);
+        assertEq(organism.votingStake(OTHER), 50 ether);
+        vm.warp(vm.getBlockTimestamp() + 1 days);
+        organism.clearPending();
+        _park(bob, OTHER, 50 ether);
+        vm.warp(organism.retryAt());
+        _ask();
+        assertEq(organism.voteRound(), oldRound + 1);
+        assertEq(organism.votingStake(OTHER), 250 ether);
+        _deliver(0, 0, true);
+        organism.settle();
+        assertEq(organism.location(), OTHER);
+        assertEq(organism.lastSettledDay(), START + 2);
+        _conservation();
+    }
+
+    /// forge-config: default.fuzz.runs = 1000
+    function testFuzz_repeatedTopUpsCannotOverwriteHeartbeatSnapshot(uint96 seed) public {
+        _birth();
+        _park(bob, OTHER, 100 ether);
+        _ask();
+        uint256 amount = bound(seed, 1, 100 ether);
+        _park(bob, OTHER, amount);
+        _park(bob, OTHER, amount);
+        assertEq(organism.votingStake(OTHER), 100 ether);
+        _deliver(0, 0, true);
+        organism.settle();
+        assertEq(organism.location(), LISBON, "post-request deposits cannot break a voting tie");
+        _weather(0, 0);
+        assertEq(organism.location(), OTHER, "retained deposits vote on the following request");
+        _conservation();
+    }
 }

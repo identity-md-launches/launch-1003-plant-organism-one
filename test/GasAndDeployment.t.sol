@@ -119,11 +119,7 @@ contract GasAndDeploymentTest is PlantTestBase {
         _cool(address(organism));
         _cool(address(imd));
         _cool(address(plant));
-        uint256 beforeGas = gasleft();
-        organism.settle();
-        uint256 used = beforeGas - gasleft();
-        emit log_named_uint("cold settle, 24 sips and repaired candidate", used);
-        assertLe(used, 400000);
+        _settleWithinGasLimit();
         assertEq(organism.location(), OTHER);
     }
 }
