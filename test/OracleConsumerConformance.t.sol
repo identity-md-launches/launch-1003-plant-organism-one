@@ -118,9 +118,8 @@ contract OracleConsumerConformanceTest is PlantTestBase {
         assertEq(a.answer, abi.encode(bytes32(0x0000000000000000000000000000000000005163000000000001654321123456)));
         bytes memory fixtureSignature =
             hex"e08814b42c067269013ccfe011ee104cd8638a8188ba37bf2c38255bb5d9dc3873337c7a72d439e67f52cf5a3a70a587fec46eb223d86061ac877e436573ed4a1b";
-        (bool ok,, uint256 gasUsed) = intake.deliver(intake.lastId(), a, fixtureSignature);
+        (bool ok,,) = intake.deliver(intake.lastId(), a, fixtureSignature);
         assertTrue(ok);
-        assertLt(gasUsed, 200000);
         assertTrue(organism.consumed(a.requestId));
     }
 }

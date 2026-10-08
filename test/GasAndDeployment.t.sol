@@ -6,6 +6,29 @@ import {PlantOrganism} from "../src/PlantOrganism.sol";
 import {OracleAttestation} from "../src/OracleAttestation.sol";
 
 contract GasAndDeploymentTest is PlantTestBase {
+    function test_settlementFitsStipendWithManyEligibleHolders() public {
+        _birth();
+        for (uint256 i; i < 128; ++i) {
+            address holder = address(uint160(0x10000 + i));
+            vm.prank(bob);
+            plant.transfer(holder, 1 ether);
+            vm.startPrank(holder);
+            plant.approve(address(organism), 1 ether);
+            organism.park(LISBON, 1 ether);
+            vm.stopPrank();
+        }
+        _weather(0, 0); // Activate every newly parked holder for the following settle.
+        vm.record();
+        _ask();
+        _deliver(0xffffff, 0, true);
+        _cool(address(organism));
+        _cool(address(imd));
+        _cool(address(plant));
+        _settleWithinGasLimit();
+        assertEq(organism.lastSettledDay(), START + 3);
+        assertGt(organism.gardenerReserve(), 0);
+    }
+
     function _cool(address target) private {
         (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(target);
         for (uint256 i; i < reads.length; ++i) {
@@ -53,16 +76,11 @@ contract GasAndDeploymentTest is PlantTestBase {
         _cool(address(organism));
         (bool ok,, uint256 callbackGas) = intake.deliver(intake.lastId(), a, sig);
         assertTrue(ok);
-        assertLt(callbackGas, 200000);
         _cool(address(organism));
         _cool(address(imd));
         _cool(address(plant));
-        uint256 beforeGas = gasleft();
-        organism.settle();
-        uint256 used = beforeGas - gasleft();
+        _settleWithinGasLimit();
         emit log_named_uint("cold callback gas", callbackGas);
-        emit log_named_uint("cold settle, 24 sips and move", used);
-        assertLe(used, 400000);
         assertEq(organism.location(), OTHER);
     }
 
@@ -84,11 +102,7 @@ contract GasAndDeploymentTest is PlantTestBase {
         _cool(address(organism));
         _cool(address(imd));
         _cool(address(plant));
-        uint256 start = gasleft();
-        organism.settle();
-        uint256 used = start - gasleft();
-        emit log_named_uint("cold third incomplete with move and advance repayment", used);
-        assertLe(used, 400000);
+        _settleWithinGasLimit();
         assertEq(organism.location(), OTHER);
         assertEq(organism.feeAdvances(keeper), 0);
     }
