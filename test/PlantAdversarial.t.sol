@@ -220,15 +220,17 @@ contract PlantAdversarialTest is PlantTestBase {
     }
 
     function test_thirdIncompleteReadsCandidateFromLatestRequest() public {
-        _birth();
-        _park(bob, OTHER, 150 ether);
+        _park(alice, THIRD, 200 ether);
+        _birthWithCommittedCandidate(250 ether);
         for (uint256 i; i < 2; ++i) {
             _ask();
+            assertEq(_pending().challenger, OTHER);
             _deliver(0, 0, false);
             organism.clearPending();
             vm.warp(organism.retryAt());
         }
-        _park(alice, THIRD, 200 ether);
+        _unpark(bob, OTHER, 100 ether);
+        organism.challenge(THIRD);
         _ask();
         assertEq(_pending().challenger, THIRD);
         _unpark(bob, OTHER, 150 ether);
@@ -242,13 +244,15 @@ contract PlantAdversarialTest is PlantTestBase {
         assertFalse(_pending().exists);
     }
 
-    function test_challengerAddedAfterAskWaitsForFollowingRequest() public {
+    function test_depositAfterAskMustMatureBeforeItCanChallenge() public {
         _birth();
         _ask();
         _park(bob, OTHER, 150 ether);
         _deliver(0, 0, true);
         organism.settle();
         assertEq(organism.location(), LISBON);
+        assertEq(organism.challenger(), 0);
+        organism.challenge(OTHER);
         assertEq(organism.challenger(), OTHER);
         _weather(0, 0);
         assertEq(organism.location(), OTHER);
@@ -256,8 +260,7 @@ contract PlantAdversarialTest is PlantTestBase {
     }
 
     function test_moveRewardsDepartingCellAndNeverIncomingCellForSameDay() public {
-        _birth();
-        _park(bob, OTHER, 200 ether);
+        _birthWithCommittedCandidate(200 ether);
         _weather(1, 0);
         assertEq(organism.location(), OTHER);
         vm.prank(bob);

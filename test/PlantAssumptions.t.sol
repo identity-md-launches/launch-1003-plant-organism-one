@@ -14,8 +14,7 @@ contract PlantAssumptionsTest is PlantTestBase {
     }
 
     function test_timeoutsDoNotCountAndEventuallyDie() public {
-        _birth();
-        _park(bob, OTHER, 300 ether);
+        _birthWithCommittedCandidate(300 ether);
         for (uint256 i; i < 23; ++i) {
             _ask();
             vm.warp(vm.getBlockTimestamp() + 1 days);
@@ -46,6 +45,10 @@ contract PlantAssumptionsTest is PlantTestBase {
         vm.prank(carol);
         organism.redeem(60 ether);
         _park(carol, OTHER, 40 ether);
+        _weather(0, 0); // Mature the stake so the next READ exercises the supply threshold.
+        organism.challenge(OTHER);
+        assertEq(organism.votingStake(OTHER), 40 ether);
+        assertEq(organism.votingStake(LISBON), 0);
         _weather(0, 0);
         assertEq(organism.burned(), 960 ether);
         assertEq(organism.location(), LISBON);

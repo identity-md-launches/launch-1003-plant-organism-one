@@ -24,7 +24,10 @@ fractional five-percent thresholds, death with pending debt, intake rotation, in
 zero/overdraw inputs, lifecycle events, and repeated park/unpark round trips.
 
 `PlantVotingRevision.t.sol` covers committed voting ties, repeated deposits during a request,
-withdrawals, repaired challengers, and fresh snapshots after incomplete or timed-out requests.
+withdrawals, repaired challengers, and retries that cannot mature fresh stake. The accepted voting
+revision activates deposits only after a successful settle; birth uses live stake.
+`PlantVotingCommitment.t.sol` covers loans at both heartbeat and settlement, decoy candidates,
+veto attempts, withdrawal/redeposit, and the five-percent threshold using retained commitments.
 
 `PlantStateMachine.t.sol` drives twelve operations among three holders and three cells in random
 order, including separately requested, delivered, cleared, and settled oracle results. Every run
@@ -32,8 +35,8 @@ starts with actual growth and an outstanding fee advance. Its independent ghost 
 donations, caller contributions, oracle fees, payouts, each holder's stake, and permanently
 surrendered PLANT. Assertions compare these with actual custody, sum per-holder credits/debts,
 check funded senior reserves, enforce floor/day monotonicity and final death, and verify repeated
-claims cannot pay twice. Request-time ghost stakes also check voting power and relocation thresholds
-through deposits, withdrawals, callbacks, retries, and settlement. After every sequence it forces
+claims cannot pay twice. Per-holder ghost commitments also check voting power and the exact expected
+destination through deposits, withdrawals, callbacks, retries, and settlement. After every sequence it forces
 death, exits every position, funds any remaining oracle deficit, claims all debts, and redeems all
 remaining supply. The existing
 `PlantInvariant.t.sol` additionally exercises repeated complete weather days and lazy reward

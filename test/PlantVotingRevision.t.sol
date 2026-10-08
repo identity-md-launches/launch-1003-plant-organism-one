@@ -114,8 +114,7 @@ contract PlantVotingRevisionTest is PlantTestBase {
     }
 
     function test_currentCellWithdrawalBreaksTieForCommittedCandidate() public {
-        _birth();
-        _park(bob, OTHER, 100 ether);
+        _birthWithCommittedCandidate(100 ether);
         _ask();
         _deliver(0, 0, true);
         _unpark(alice, LISBON, 1);
@@ -125,11 +124,10 @@ contract PlantVotingRevisionTest is PlantTestBase {
         _conservation();
     }
 
-    function test_timeoutRetryRefreshesSnapshotIncludingCooldownDeposits() public {
-        _birth();
-        _park(bob, OTHER, 50 ether);
+    function test_timeoutRetryCannotMatureRequestOrCooldownDeposits() public {
+        _birthWithCommittedCandidate(50 ether);
         _ask();
-        uint256 oldRound = organism.voteRound();
+        uint256 oldEpoch = organism.epoch();
         _park(bob, OTHER, 150 ether);
         assertEq(organism.votingStake(OTHER), 50 ether);
         vm.warp(vm.getBlockTimestamp() + 1 days);
@@ -137,19 +135,82 @@ contract PlantVotingRevisionTest is PlantTestBase {
         _park(bob, OTHER, 50 ether);
         vm.warp(organism.retryAt());
         _ask();
-        assertEq(organism.voteRound(), oldRound + 1);
-        assertEq(organism.votingStake(OTHER), 250 ether);
+        assertEq(organism.epoch(), oldEpoch);
+        assertEq(organism.votingStake(OTHER), 50 ether);
         _deliver(0, 0, true);
         organism.settle();
-        assertEq(organism.location(), OTHER);
+        assertEq(organism.location(), LISBON);
         assertEq(organism.lastSettledDay(), START + 2);
+        assertEq(organism.votingStake(OTHER), 250 ether);
+        organism.challenge(OTHER);
+        _weather(0, 0);
+        assertEq(organism.location(), OTHER);
+        _conservation();
+    }
+
+    function test_thirdIncompleteReadsBeforePromotingFreshDeposits() public {
+        _birthWithCommittedCandidate(50 ether);
+        _park(bob, OTHER, 100 ether);
+        uint256 oldEpoch = organism.epoch();
+        for (uint256 i; i < 3; ++i) {
+            _ask();
+            assertEq(organism.votingStake(OTHER), 50 ether);
+            _deliver(0, 0, false);
+            organism.clearPending();
+            assertEq(organism.location(), LISBON, "fresh deposits voted in the incomplete day");
+            if (i < 2) {
+                assertEq(organism.epoch(), oldEpoch);
+                vm.warp(organism.retryAt());
+            }
+        }
+        assertEq(organism.epoch(), oldEpoch + 1);
+        assertEq(organism.water(), 50);
+        assertEq(organism.backing(), 0);
+        assertEq(organism.votingStake(OTHER), 150 ether);
+        _weather(0, 0);
+        assertEq(organism.location(), OTHER);
+        _conservation();
+    }
+
+    function test_replacementHolderCannotInheritWithdrawnVotingPower() public {
+        _birthWithCommittedCandidate(150 ether);
+        _ask();
+        _park(carol, OTHER, 100 ether);
+        _unpark(bob, OTHER, 100 ether);
+        assertEq(organism.parkedTotal(OTHER), 150 ether);
+        assertEq(organism.votingStake(OTHER), 50 ether);
+        organism.checkpoint(OTHER, carol);
+        vm.prank(bob);
+        organism.claim();
+        assertEq(organism.votingStake(OTHER), 50 ether, "checkpointing must not mature fresh stake");
+        _deliver(0, 0, true);
+        organism.settle();
+        assertEq(organism.location(), LISBON);
+        assertEq(organism.votingStake(OTHER), 150 ether);
+        _weather(0, 0);
+        assertEq(organism.location(), OTHER);
         _conservation();
     }
 
     /// forge-config: default.fuzz.runs = 1000
-    function testFuzz_repeatedTopUpsCannotOverwriteHeartbeatSnapshot(uint96 seed) public {
-        _birth();
+    function testFuzz_withdrawalUsesOwnQueuedStakeBeforeCommitment(uint96 withdrawalSeed) public {
+        _birthWithCommittedCandidate(150 ether);
+        _ask();
         _park(bob, OTHER, 100 ether);
+        uint256 withdrawn = bound(withdrawalSeed, 1, 250 ether);
+        _unpark(bob, OTHER, withdrawn);
+        uint256 retained = withdrawn <= 100 ether ? 150 ether : 250 ether - withdrawn;
+        assertEq(organism.votingStake(OTHER), retained);
+        _deliver(0, 0, true);
+        organism.settle();
+        assertEq(organism.location(), retained > 100 ether ? OTHER : LISBON);
+        assertEq(organism.votingStake(OTHER), 250 ether - withdrawn);
+        _conservation();
+    }
+
+    /// forge-config: default.fuzz.runs = 1000
+    function testFuzz_repeatedTopUpsCannotIncreaseCommittedStake(uint96 seed) public {
+        _birthWithCommittedCandidate(100 ether);
         _ask();
         uint256 amount = bound(seed, 1, 100 ether);
         _park(bob, OTHER, amount);

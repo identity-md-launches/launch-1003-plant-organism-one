@@ -15,7 +15,8 @@ contract PlantStateMachineHandler is Test {
     address[3] public actors;
     uint32[3] public cells = [uint32(10223579), uint32(10354651), uint32(10420186)];
     uint256[3][3] public stake;
-    uint256[3] public stakeAtRequest;
+    // Per-holder stake retained since the last successful settle. New deposits do not vote yet.
+    uint256[3][3] public committed;
     uint256 public donated;
     uint256 public advanced;
     uint256 public fees;
@@ -119,6 +120,8 @@ contract PlantStateMachineHandler is Test {
         vm.prank(actors[a]);
         organism.unpark(cells[c], amount);
         stake[c][a] -= amount;
+        // Withdraw fresh deposits first; a withdrawn commitment cannot be restored by redepositing.
+        if (committed[c][a] > stake[c][a]) committed[c][a] = stake[c][a];
         assertEq(plant.balanceOf(actors[a]), beforeBalance + amount, "unpark must return exact stake");
         _observe();
     }
@@ -173,10 +176,6 @@ contract PlantStateMachineHandler is Test {
         uint256 beforeBalance = imd.balanceOf(who);
         vm.prank(who);
         organism.heartbeat();
-        // Snapshot the independent holder ledger, including cells not currently nominated.
-        for (uint256 c; c < 3; ++c) {
-            stakeAtRequest[c] = stake[c][0] + stake[c][1] + stake[c][2];
-        }
         advanced += beforeBalance - imd.balanceOf(who);
         fees += intake.price();
         ++requests;
@@ -221,11 +220,17 @@ contract PlantStateMachineHandler is Test {
         uint32 beforeLocation = organism.location();
         uint32 capturedCandidate = _pending().challenger;
         uint32 liveCandidate = organism.challenger();
+        uint32 expectedLocation = beforeLocation;
+        if (beforeLocation != 0) {
+            if (_canMove(capturedCandidate, beforeLocation)) expectedLocation = capturedCandidate;
+            else if (_canMove(liveCandidate, beforeLocation)) expectedLocation = liveCandidate;
+        }
         organism.settle();
         paid += _paidToActors() - beforeBalance;
         if (organism.lastSettledDay() > beforeDay) {
             ++settlements;
             uint32 destination = organism.location();
+            if (beforeLocation != 0) assertEq(destination, expectedLocation, "READ differs from retained votes");
             if (beforeLocation != 0 && destination != beforeLocation) {
                 assertTrue(
                     destination == capturedCandidate || destination == liveCandidate, "move used an unnominated cell"
@@ -235,18 +240,29 @@ contract PlantStateMachineHandler is Test {
                     _committedStake(destination), _committedStake(beforeLocation), "move used uncommitted majority"
                 );
             }
+            // Promotion is tied to settlement, never to requests, callbacks, or timeout clears.
+            for (uint256 c; c < 3; ++c) {
+                for (uint256 a; a < 3; ++a) {
+                    committed[c][a] = stake[c][a];
+                }
+            }
         }
         _observe();
     }
 
     function _committedStake(uint32 cell) private view returns (uint256) {
+        if (cell == 0) return 0;
         for (uint256 c; c < 3; ++c) {
             if (cells[c] == cell) {
-                uint256 remaining = stake[c][0] + stake[c][1] + stake[c][2];
-                return remaining < stakeAtRequest[c] ? remaining : stakeAtRequest[c];
+                return committed[c][0] + committed[c][1] + committed[c][2];
             }
         }
         revert("untracked cell");
+    }
+
+    function _canMove(uint32 candidate, uint32 current) private view returns (bool) {
+        return candidate != 0 && candidate != current && _committedStake(candidate) >= 150 ether
+            && _committedStake(candidate) > _committedStake(current);
     }
 
     function clear() external {
@@ -271,7 +287,7 @@ contract PlantStateMachineHandler is Test {
 
     function assertLedger() public view {
         uint256 held = imd.balanceOf(address(organism));
-        assertEq(organism.voteRound(), requests, "vote round must advance exactly once per request");
+        assertEq(intake.sequence(), requests, "each heartbeat must create exactly one intake request");
         assertEq(held + fees + paid, donated + advanced, "IMD inflow/outflow ghost ledger");
         assertEq(imd.balanceOf(address(intake)), fees, "oracle fees paid exactly once");
         assertEq(_paidToActors() + advanced, 30000 ether + paid, "actor IMD ledger");
@@ -291,13 +307,11 @@ contract PlantStateMachineHandler is Test {
                 cellSum += stake[c][a];
             }
             assertEq(organism.parkedTotal(cells[c]), cellSum, "cell aggregation");
-            if (_pending().exists) {
-                assertEq(
-                    organism.votingStake(cells[c]),
-                    _committedStake(cells[c]),
-                    "pending vote differs from request-time stake capped by withdrawals"
-                );
-            }
+            assertEq(
+                organism.votingStake(cells[c]),
+                organism.location() == 0 ? cellSum : _committedStake(cells[c]),
+                "vote differs from each holder's retained commitment"
+            );
             allParked += cellSum;
         }
         assertEq(organism.totalParked(), allParked);
