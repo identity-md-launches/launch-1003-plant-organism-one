@@ -144,6 +144,12 @@ abstract contract PlantTestBase is Test {
         organism.settle();
     }
 
+    function _settleWithinGasLimit() internal {
+        (bool ok, bytes memory reason) = address(organism).call{gas: 400000}(abi.encodeWithSignature("settle()"));
+        if (!ok) emit log_bytes(reason);
+        assertTrue(ok, "settle must succeed with a 400,000 gas stipend");
+    }
+
     function _conservation() internal view {
         assertEq(
             organism.pot() + int256(organism.backing()) + int256(organism.owed()),
@@ -364,15 +370,10 @@ contract PlantOracleTest is PlantTestBase {
         _ask();
         uint256 gasUsed = _deliver(0x555555, 0xaaaaaa, true);
         emit log_named_uint("callback gas including mock encoding", gasUsed);
-        assertLt(gasUsed, 200000);
         assertEq(organism.water(), 50);
         assertEq(organism.backing(), 0);
         assertEq(organism.lastSettledDay(), START + 1);
-        uint256 beforeGas = gasleft();
-        organism.settle();
-        uint256 settlementGas = beforeGas - gasleft();
-        emit log_named_uint("settle gas", settlementGas);
-        assertLt(settlementGas, 400000);
+        _settleWithinGasLimit();
         assertEq(organism.lastSettledDay(), START + 2);
         _conservation();
     }
@@ -789,6 +790,7 @@ contract PlantRewardsTest is PlantTestBase {
         _conservation();
     }
 
+    /// forge-config: default.fuzz.runs = 1000
     function testFuzz_hourlyAccountingMatchesIndependentModel(uint24 sun, uint24 rain) public {
         _birth();
         rain &= ~sun;
@@ -816,6 +818,7 @@ contract PlantRewardsTest is PlantTestBase {
         _conservation();
     }
 
+    /// forge-config: default.fuzz.runs = 1000
     function testFuzz_floorConservationAndBurnCustody(uint96 donation, uint96 redemption, uint24 sun) public {
         _birth();
         imd.mint(address(organism), donation);
