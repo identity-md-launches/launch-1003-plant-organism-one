@@ -56,6 +56,15 @@ contract PlantOrganism is OracleAttestationConsumer, ReentrancyGuard {
     mapping(uint32 => mapping(address => uint256)) public parked;
     mapping(uint32 => uint256) public parkedTotal;
 
+    // Lazy per-request snapshots preserve balances at heartbeat without scanning cells.
+    uint256 public voteRound;
+
+    struct VoteSnapshot {
+        uint256 round;
+        uint256 amount;
+    }
+    mapping(uint32 => VoteSnapshot) public voteSnapshots;
+
     struct Pending {
         bytes32 requestId;
         uint32 day;
@@ -226,6 +235,7 @@ contract PlantOrganism is OracleAttestationConsumer, ReentrancyGuard {
     }
 
     function question() external view returns (string memory) {
+        if (location == 0) return "";
         return question(location, lastSettledDay + 1);
     }
 
@@ -238,6 +248,7 @@ contract PlantOrganism is OracleAttestationConsumer, ReentrancyGuard {
         WeatherQuestion.validate(cell);
         if (amount == 0) revert InvalidAmount();
         _checkpoint(cell, msg.sender);
+        _snapshotVote(cell);
         _pullExact(PLANT, msg.sender, amount);
         positions[cell][msg.sender].queued += amount;
         cellRewards[cell].queued += amount;
@@ -253,6 +264,7 @@ contract PlantOrganism is OracleAttestationConsumer, ReentrancyGuard {
         if (amount == 0 || amount > parked[cell][msg.sender]) revert InvalidAmount();
         _syncDeath();
         _checkpoint(cell, msg.sender);
+        _snapshotVote(cell);
         Position storage p = positions[cell][msg.sender];
         CellRewards storage c = cellRewards[cell];
         uint256 queued = Math.min(amount, p.queued);
@@ -310,6 +322,9 @@ contract PlantOrganism is OracleAttestationConsumer, ReentrancyGuard {
         if (IMD.balanceOf(address(this)) != beforeBalance - price) revert NonExactTransfer();
         pending =
             Pending(id, day, challenger, msg.sender, uint64(block.timestamp), address(intake), true, false, bytes32(0));
+        ++voteRound;
+        _snapshotVote(location);
+        _snapshotVote(challenger);
         emit Asked(id, day, location, challenger, msg.sender, price);
     }
 
@@ -413,7 +428,7 @@ contract PlantOrganism is OracleAttestationConsumer, ReentrancyGuard {
         }
         uint32 oldCell = location;
         _distribute(oldCell, pool);
-        _read(candidate);
+        if (!_read(candidate) && challenger != candidate) _read(challenger);
         if (oldCell == 0 && location == 0 && ++birthSettles == 3) {
             location = FALLBACK_CELL;
             challenger = 0;
@@ -449,15 +464,32 @@ contract PlantOrganism is OracleAttestationConsumer, ReentrancyGuard {
         water = uint8(wet);
     }
 
-    function _read(uint32 candidate) private {
+    function _snapshotVote(uint32 cell) private {
+        if (pending.exists && voteSnapshots[cell].round != voteRound) {
+            voteSnapshots[cell] = VoteSnapshot(voteRound, parkedTotal[cell]);
+        }
+    }
+
+    /// @notice Weather-day voting power: balance at heartbeat capped by the remaining stake.
+    function votingStake(uint32 cell) public view returns (uint256) {
+        VoteSnapshot storage snapshot = voteSnapshots[cell];
+        uint256 atHeartbeat = snapshot.round == voteRound ? snapshot.amount : parkedTotal[cell];
+        return Math.min(atHeartbeat, parkedTotal[cell]);
+    }
+
+    function _read(uint32 candidate) private returns (bool moved) {
         uint32 current = location;
+        // Birth has no oracle request. Weather-day votes cannot gain power after heartbeat.
+        uint256 candidateStake = current == 0 ? parkedTotal[candidate] : votingStake(candidate);
+        uint256 currentStake = current == 0 ? parkedTotal[current] : votingStake(current);
         if (
-            candidate != 0 && candidate != current && parkedTotal[candidate] > parkedTotal[current]
-                && parkedTotal[candidate] >= Math.ceilDiv(PLANT.totalSupply(), 20)
+            candidate != 0 && candidate != current && candidateStake > currentStake
+                && candidateStake >= Math.ceilDiv(PLANT.totalSupply(), 20)
         ) {
             location = candidate;
             challenger = 0;
             emit Moved(current, candidate);
+            return true;
         }
     }
 

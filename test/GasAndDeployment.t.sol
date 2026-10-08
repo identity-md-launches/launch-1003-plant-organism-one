@@ -92,4 +92,24 @@ contract GasAndDeploymentTest is PlantTestBase {
         assertEq(organism.location(), OTHER);
         assertEq(organism.feeAdvances(keeper), 0);
     }
+
+    function test_coldMaxHoursWithRepairedCandidateSettleGas() public {
+        vm.record();
+        _birth();
+        _park(bob, OTHER, 200 ether);
+        _park(alice, THIRD, 201 ether);
+        _ask();
+        _unpark(alice, THIRD, 201 ether);
+        organism.challenge(OTHER);
+        _deliver(0xffffff, 0, true);
+        _cool(address(organism));
+        _cool(address(imd));
+        _cool(address(plant));
+        uint256 beforeGas = gasleft();
+        organism.settle();
+        uint256 used = beforeGas - gasleft();
+        emit log_named_uint("cold settle, 24 sips and repaired candidate", used);
+        assertLe(used, 400000);
+        assertEq(organism.location(), OTHER);
+    }
 }
