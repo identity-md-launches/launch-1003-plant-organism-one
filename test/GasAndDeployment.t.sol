@@ -44,8 +44,7 @@ contract GasAndDeploymentTest is PlantTestBase {
 
     function test_coldCallbackAndMaxHoursMoveSettleGas() public {
         vm.record();
-        _birth();
-        _park(bob, OTHER, 201 ether);
+        _birthWithCommittedCandidate(201 ether);
         _park(carol, LISBON, 100 ether);
         _ask();
         OracleAttestation.Attestation memory a = _attestation(0xffffff, 0, true);
@@ -68,8 +67,7 @@ contract GasAndDeploymentTest is PlantTestBase {
 
     function test_thirdIncompleteMoveAndAdvancePaymentGas() public {
         vm.record();
-        _birth();
-        _park(bob, OTHER, 201 ether);
+        _birthWithCommittedCandidate(201 ether);
         intake.setPrice(1001 ether);
         imd.mint(keeper, 10000 ether);
         for (uint256 i; i < 3; ++i) {
@@ -95,9 +93,9 @@ contract GasAndDeploymentTest is PlantTestBase {
 
     function test_coldMaxHoursWithRepairedCandidateSettleGas() public {
         vm.record();
-        _birth();
-        _park(bob, OTHER, 200 ether);
         _park(alice, THIRD, 201 ether);
+        _birthWithCommittedCandidate(200 ether);
+        organism.challenge(THIRD);
         _ask();
         _unpark(alice, THIRD, 201 ether);
         organism.challenge(OTHER);

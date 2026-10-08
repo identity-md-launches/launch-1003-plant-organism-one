@@ -77,6 +77,17 @@ abstract contract PlantTestBase is Test {
         assertEq(organism.location(), LISBON);
     }
 
+    function _birthWithCommittedCandidate(uint256 amount) internal {
+        _park(alice, LISBON, 300 ether);
+        _park(bob, OTHER, amount);
+        _nextEnded();
+        organism.settle();
+        assertEq(organism.location(), LISBON);
+        _unpark(alice, LISBON, 200 ether);
+        organism.challenge(OTHER);
+        assertEq(organism.votingStake(OTHER), amount);
+    }
+
     function _ask() internal returns (bytes32 id) {
         _nextEnded();
         vm.prank(keeper);
@@ -253,9 +264,8 @@ contract PlantLifecycleTest is PlantTestBase {
         assertEq(organism.challenger(), 0);
     }
 
-    function test_moveUsesPendingCandidateButLiveBalances() public {
-        _birth();
-        _park(bob, OTHER, 150 ether);
+    function test_moveUsesPendingCandidateAndRemainingCommittedBalances() public {
+        _birthWithCommittedCandidate(150 ether);
         _ask();
         _park(alice, THIRD, 200 ether);
         _deliver(1, 0, true);
@@ -475,8 +485,7 @@ contract PlantOracleTest is PlantTestBase {
     }
 
     function test_incompleteHasNoBiologicalChangesThenThirdReads() public {
-        _birth();
-        _park(bob, OTHER, 200 ether);
+        _birthWithCommittedCandidate(200 ether);
         for (uint8 i = 1; i <= 3; ++i) {
             _ask();
             _deliver(0, 0, false);
@@ -628,13 +637,14 @@ contract PlantRewardsTest is PlantTestBase {
     }
 
     function test_oldCellKeepsItsRewardsAfterMoveAndLazyActivation() public {
-        _birth();
-        _park(bob, OTHER, 200 ether);
+        _birthWithCommittedCandidate(200 ether);
         _weather(1, 0);
         assertEq(organism.location(), OTHER);
         assertEq(organism.lastRewardCell(), LISBON);
         _weather(1, 0);
         _park(alice, THIRD, 300 ether);
+        _weather(0, 0); // Mature the destination stake before proposing a move.
+        organism.challenge(THIRD);
         _weather(1, 0);
         assertEq(organism.location(), THIRD);
         _weather(1, 0);

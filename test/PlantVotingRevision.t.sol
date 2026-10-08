@@ -36,8 +36,7 @@ contract PlantVotingRevisionTest is PlantTestBase {
     }
 
     function test_atomicCurrentCellTopUpCannotVetoCommittedCandidate() public {
-        _birth();
-        _park(bob, OTHER, 200 ether);
+        _birthWithCommittedCandidate(200 ether);
         _ask();
         _deliver(0, 0, true);
         _park(alice, LISBON, 300 ether);
@@ -48,9 +47,9 @@ contract PlantVotingRevisionTest is PlantTestBase {
     }
 
     function test_emptyCapturedCandidateFallsBackToRepairedLiveCandidate() public {
-        _birth();
-        _park(bob, OTHER, 200 ether);
         _park(alice, THIRD, 201 ether);
+        _birthWithCommittedCandidate(200 ether);
+        organism.challenge(THIRD);
         _ask();
         (,, uint32 captured,,,,,,) = organism.pending();
         assertEq(captured, THIRD);
@@ -63,21 +62,20 @@ contract PlantVotingRevisionTest is PlantTestBase {
     }
 
     function test_fallbackCannotUseNewPostHeartbeatStake() public {
-        _birth();
-        _park(bob, OTHER, 150 ether);
+        _birthWithCommittedCandidate(150 ether);
         _ask();
         _unpark(bob, OTHER, 150 ether);
         _park(alice, THIRD, 200 ether);
         _deliver(0, 0, true);
         organism.settle();
         assertEq(organism.location(), LISBON);
+        organism.challenge(THIRD);
         _weather(0, 0);
         assertEq(organism.location(), THIRD);
     }
 
-    function test_withdrawalCapsSnapshotAndReaskUsesNewBalances() public {
-        _birth();
-        _park(bob, OTHER, 200 ether);
+    function test_withdrawalRemovesPowerAndReaskCannotRestoreIt() public {
+        _birthWithCommittedCandidate(200 ether);
         _ask();
         _unpark(bob, OTHER, 199 ether);
         assertEq(organism.votingStake(OTHER), 1 ether);
@@ -86,18 +84,23 @@ contract PlantVotingRevisionTest is PlantTestBase {
         _park(bob, OTHER, 199 ether);
         vm.warp(vm.getBlockTimestamp() + 6 hours);
         _ask();
-        assertEq(organism.votingStake(OTHER), 200 ether);
+        assertEq(organism.votingStake(OTHER), 1 ether);
         _deliver(0, 0, true);
         organism.settle();
+        assertEq(organism.location(), LISBON);
+        assertEq(organism.votingStake(OTHER), 200 ether);
+        organism.challenge(OTHER);
+        _weather(0, 0);
         assertEq(organism.location(), OTHER);
         _conservation();
     }
 
     function test_thirdIncompleteAlsoUsesRepairedCandidate() public {
-        _birth();
-        _park(bob, OTHER, 200 ether);
+        _park(alice, THIRD, 201 ether);
+        _birthWithCommittedCandidate(200 ether);
+        organism.challenge(THIRD);
         for (uint256 i; i < 3; ++i) {
-            _park(alice, THIRD, 201 ether);
+            if (i != 0) _park(alice, THIRD, 201 ether);
             _ask();
             _unpark(alice, THIRD, 201 ether);
             organism.challenge(OTHER);
