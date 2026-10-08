@@ -1,0 +1,95 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.26;
+
+import {PlantTestBase} from "./PlantOrganism.t.sol";
+import {PlantOrganism} from "../src/PlantOrganism.sol";
+import {OracleAttestation} from "../src/OracleAttestation.sol";
+
+contract GasAndDeploymentTest is PlantTestBase {
+    function _cool(address target) private {
+        (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(target);
+        for (uint256 i; i < reads.length; ++i) {
+            vm.coolSlot(target, reads[i]);
+        }
+        for (uint256 i; i < writes.length; ++i) {
+            vm.coolSlot(target, writes[i]);
+        }
+        vm.cool(target);
+    }
+
+    function test_requestedStaticConstructorAndForbiddenOpcodes() public {
+        PlantOrganism liveConfig = new PlantOrganism(
+            0x5F7Bb59365ce557C26dbcAa4EE9d39A4b95B7127,
+            0x1397434cd35e8a9C8aC312A61D3A285EB31dea56,
+            ACTION,
+            0x5598Aa9146215Bc13eb26f2c692Ad1461Fd32982,
+            LISBON,
+            address(this)
+        );
+        assertEq(liveConfig.deployer(), address(this));
+        assertEq(liveConfig.FALLBACK_CELL(), LISBON);
+        assertEq(liveConfig.lastSettledDay(), START);
+        assertEq(liveConfig.action(), ACTION);
+        bytes memory code = address(liveConfig).code;
+        assertLe(code.length, 24576);
+        for (uint256 j; j < code.length; ++j) {
+            uint8 op = uint8(code[j]);
+            if (op >= 0x60 && op <= 0x7f) {
+                j += op - 0x5f;
+                continue;
+            }
+            assertTrue(op != 0xf4 && op != 0xf2 && op != 0xff);
+        }
+    }
+
+    function test_coldCallbackAndMaxHoursMoveSettleGas() public {
+        vm.record();
+        _birth();
+        _park(bob, OTHER, 201 ether);
+        _park(carol, LISBON, 100 ether);
+        _ask();
+        OracleAttestation.Attestation memory a = _attestation(0xffffff, 0, true);
+        bytes memory sig = _sign(a);
+        _cool(address(organism));
+        (bool ok,, uint256 callbackGas) = intake.deliver(intake.lastId(), a, sig);
+        assertTrue(ok);
+        assertLt(callbackGas, 200000);
+        _cool(address(organism));
+        _cool(address(imd));
+        _cool(address(plant));
+        uint256 beforeGas = gasleft();
+        organism.settle();
+        uint256 used = beforeGas - gasleft();
+        emit log_named_uint("cold callback gas", callbackGas);
+        emit log_named_uint("cold settle, 24 sips and move", used);
+        assertLe(used, 400000);
+        assertEq(organism.location(), OTHER);
+    }
+
+    function test_thirdIncompleteMoveAndAdvancePaymentGas() public {
+        vm.record();
+        _birth();
+        _park(bob, OTHER, 201 ether);
+        intake.setPrice(1001 ether);
+        imd.mint(keeper, 10000 ether);
+        for (uint256 i; i < 3; ++i) {
+            _ask();
+            _deliver(0, 0, false);
+            if (i != 2) {
+                organism.settle();
+                vm.warp(vm.getBlockTimestamp() + 6 hours);
+            }
+        }
+        imd.mint(address(organism), 4000 ether);
+        _cool(address(organism));
+        _cool(address(imd));
+        _cool(address(plant));
+        uint256 start = gasleft();
+        organism.settle();
+        uint256 used = start - gasleft();
+        emit log_named_uint("cold third incomplete with move and advance repayment", used);
+        assertLe(used, 400000);
+        assertEq(organism.location(), OTHER);
+        assertEq(organism.feeAdvances(keeper), 0);
+    }
+}
